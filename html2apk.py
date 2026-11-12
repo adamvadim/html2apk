@@ -364,7 +364,7 @@ def build(shell, site, name, out, icon=None, secret=None, app_id=None, version=N
     if not re.fullmatch(r'[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+', package):
         raise SystemExit('Invalid app ID: ' + package)
     vcode = int(time.time() // 60) - 29_000_000            # rises every minute, so each build is "newer"
-    vname = version or datetime.datetime.now().strftime('%Y.%m.%d %H:%M')
+    vname = version or datetime.datetime.now().strftime('%Y.%m.%d-%H%M')
 
     def repl(s):
         if s.startswith(PH_ID.decode()) or PH_ID.decode() in s:
@@ -423,14 +423,16 @@ def main():
     ap.add_argument('--out', help='output .apk path')
     ap.add_argument('--secret', help='optional phrase mixed into the signing key; reuse it for updates')
     ap.add_argument('--id', dest='app_id', help='app ID, e.g. com.example.myapp (default: from the name)')
-    ap.add_argument('--version', help='version label (default: date and time)')
+    ap.add_argument('--version', help='version label, e.g. 5.2-build3 (default: date and time); also used in the file name')
     ap.add_argument('--shell', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'shell.apk'))
     a = ap.parse_args()
     if not os.path.exists(a.shell):
         raise SystemExit('shell.apk not found next to html2apk.py')
     files = read_site(a.site)
     name = (a.name or page_title(files['index.html']) or 'My App').strip()
-    out = a.out or re.sub(r'[^A-Za-z0-9_-]+', '_', name).strip('_') + '.apk'
+    a.version = a.version or datetime.datetime.now().strftime('%Y.%m.%d-%H%M')
+    # file name always carries the version, e.g. Magic_Orb_v5.2-build3.apk
+    out = a.out or (re.sub(r'[^A-Za-z0-9_-]+', '_', name).strip('_') + '_v' + re.sub(r'[^A-Za-z0-9._-]+', '_', a.version) + '.apk')
     r = build(a.shell, a.site, name, out, a.icon, a.secret, a.app_id, a.version)
     print('OK  %(out)s  ·  name: %(name)s  ·  app ID: %(id)s  ·  version: %(version)s  ·  %(files)d file(s)  ·  %(size)d bytes' % r)
 
