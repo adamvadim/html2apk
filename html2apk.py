@@ -242,6 +242,16 @@ def letter_icon(name, color):
     return im
 
 
+def is_shell_icon(data):
+    """The shell's placeholder launcher icons are violet (#8b5cf6) circles; resource paths are shortened, so match by look."""
+    try:
+        im = Image.open(io.BytesIO(data)).convert('RGBA')
+    except Exception:
+        return False
+    w, h = im.size
+    return w == h and w in (48, 72, 96, 144, 192) and im.getpixel((w // 2, h // 2)) == (139, 92, 246, 255)
+
+
 def fit_icon(src, px, round_=True):
     """Square, centred icon. Opaque square images are cropped to a circle so they look right on any launcher."""
     w, h = src.size; s = min(w, h)
@@ -256,22 +266,58 @@ def fit_icon(src, px, round_=True):
     sq.resize((px, px), Image.LANCZOS).save(out, 'PNG', optimize=True)
     return out.getvalue()
 
-# ---------------------------------------------------------------- signing (APK Signature Scheme v2, ECDSA P-256)
+# ---------------------------------------------------------------- signing (APK Signature Scheme v2, RSA-2048)
+
+def _is_prime(n):
+    if n < 2: return False
+    for sp in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        if n % sp == 0: return n == sp
+    d, r = n - 1, 0
+    while d % 2 == 0: d //= 2; r += 1
+    for a in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71):
+        x = pow(a, d, n)
+        if x in (1, n - 1): continue
+        for _ in range(r - 1):
+            x = pow(x, 2, n)
+            if x == n - 1: break
+        else:
+            return False
+    return True
+
+
+def _det_prime(seed, label, bits, e):
+    """Deterministic prime from a seed (same seed -> same prime)."""
+    ctr = 0
+    while True:
+        stream = b''.join(hmac.new(seed, label + struct.pack('>II', ctr, i), hashlib.sha512).digest() for i in range(bits // 512 + 1))
+        n = int.from_bytes(stream[:bits // 8], 'big') | (3 << (bits - 2)) | 1
+        for k in range(0, 20000, 2):
+            c = n + k
+            if c % e != 1 and _is_prime(c):
+                return c
+        ctr += 1
+
 
 def signing_key(package, secret):
-    from cryptography.hazmat.primitives.asymmetric import ec
+    """RSA-2048 key and self-signed certificate derived from the app ID (+ optional secret): same inputs, same key."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography import x509
     from cryptography.x509.oid import NameOID
     seed = hmac.new(b'html2apk signing key v1', (package + '\n' + (secret or '')).encode(), hashlib.sha512).digest()
-    n = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
-    key = ec.derive_private_key(int.from_bytes(seed, 'big') % (n - 1) + 1, ec.SECP256R1())
+    e = 65537
+    p = _det_prime(seed, b'p', 1024, e)
+    q = _det_prime(seed, b'q', 1024, e)
+    if p < q: p, q = q, p
+    phi = (p - 1) * (q - 1)
+    d = pow(e, -1, phi)
+    key = rsa.RSAPrivateNumbers(p, q, d, d % (p - 1), d % (q - 1), pow(q, -1, p), rsa.RSAPublicNumbers(e, p * q)).private_key()
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, package[:64])])
     t0 = datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc)
     cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
             .serial_number(int.from_bytes(hashlib.sha256(seed).digest()[:16], 'big') >> 1)
             .not_valid_before(t0).not_valid_after(t0 + datetime.timedelta(days=36500))
-            .sign(key, hashes.SHA256(), ecdsa_deterministic=True))
+            .sign(key, hashes.SHA256()))
     return key, cert.public_bytes(serialization.Encoding.DER), \
         key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
 
@@ -280,7 +326,7 @@ def lp(b): return struct.pack('<I', len(b)) + b
 
 
 def sign_v2(apk, key, cert_der, pub_der):
-    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric import padding
     from cryptography.hazmat.primitives import hashes
     eocd = apk.rfind(b'PK\x05\x06')
     cd_size, cd_off = struct.unpack_from('<II', apk, eocd + 12)
@@ -297,9 +343,9 @@ def sign_v2(apk, key, cert_der, pub_der):
 
     e2 = bytearray(eo); struct.pack_into('<I', e2, 16, len(sec1))
     dg = digest(bytes(e2))
-    ALG = 0x0201  # ECDSA with SHA2-256
+    ALG = 0x0103  # RSASSA-PKCS1-v1_5 with SHA2-256
     signed = lp(lp(struct.pack('<I', ALG) + lp(dg))) + lp(lp(cert_der)) + lp(b'')
-    sig = key.sign(signed, ec.ECDSA(hashes.SHA256()))
+    sig = key.sign(signed, padding.PKCS1v15(), hashes.SHA256())
     signer = lp(signed) + lp(lp(struct.pack('<I', ALG) + lp(sig))) + lp(pub_der)
     value = lp(lp(signer))
     pair = struct.pack('<Q', 4 + len(value)) + struct.pack('<I', 0x7109871a) + value
@@ -355,9 +401,8 @@ def build(shell, site, name, out, icon=None, secret=None, app_id=None, version=N
             data = patch_manifest(data, repl, vcode); seen_manifest = True
         elif n == 'resources.arsc':
             data = patch_arsc(data, repl)
-        elif n.startswith('res/') and n.endswith('.png') and 'ic_launcher' in n:
-            px = Image.open(io.BytesIO(data)).size[0]
-            data = fit_icon(src, px)
+        elif n.startswith('res/') and n.endswith('.png') and not n.endswith('.9.png') and is_shell_icon(data):
+            data = fit_icon(src, Image.open(io.BytesIO(data)).size[0])
         add(n, data, zi.compress_type == zipfile.ZIP_STORED or n == 'resources.arsc')
     for rel, data in sorted(files.items()):
         add('assets/www/' + rel, data, False)
