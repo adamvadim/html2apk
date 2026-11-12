@@ -77,7 +77,10 @@ public class MainActivity extends Activity {
                 r = insets.getSystemWindowInsetRight(); b = insets.getSystemWindowInsetBottom();
             }
             if (customView == null) v.setPadding(l, t, r, b); else v.setPadding(0, 0, 0, 0);
-            return insets;
+            // The bars are already kept clear here, so the page must not add the same space again
+            // through CSS env(safe-area-inset-*): consume the insets so the WebView sees none.
+            if (Build.VERSION.SDK_INT >= 30) return WindowInsets.CONSUMED;
+            return insets.consumeSystemWindowInsets();
         });
 
         WebSettings s = web.getSettings();
