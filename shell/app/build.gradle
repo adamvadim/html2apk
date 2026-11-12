@@ -1,0 +1,20 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'app.htmlapk.runtime'
+    compileSdk 35
+    defaultConfig {
+        // Placeholders: replaced inside the finished APK by html2apk.py
+        applicationId 'app.htmlapk.placeholder.zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName 'HTMLAPK_VERSION_NAME_PLACEHOLDER_________'
+    }
+    buildTypes {
+        // The "debug" build keeps plain resource paths; it is re-signed later anyway.
+        debug { debuggable false; minifyEnabled false }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    lint { abortOnError false; checkReleaseBuilds false }
+}
+dependencies { implementation 'androidx.webkit:webkit:1.12.1' }
