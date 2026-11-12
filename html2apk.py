@@ -356,7 +356,7 @@ def sign_v2(apk, key, cert_der, pub_der):
 
 # ---------------------------------------------------------------- build
 
-def build(shell, site, name, out, icon=None, secret=None, app_id=None, version=None):
+def build(shell, site, name, out, icon=None, secret=None, app_id=None, version=None, label=None):
     files = read_site(site)
     html = files['index.html']
     name = (name or page_title(html) or 'My App').strip()[:50]
@@ -369,7 +369,7 @@ def build(shell, site, name, out, icon=None, secret=None, app_id=None, version=N
     def repl(s):
         if s.startswith(PH_ID.decode()) or PH_ID.decode() in s:
             s = re.sub(re.escape(PH_ID.decode()) + r'z+', package, s)
-        if s.startswith(PH_NAME): s = name
+        if s.startswith(PH_NAME): s = label or name
         if s.startswith(PH_VER): s = vname
         return s
 
@@ -412,13 +412,14 @@ def build(shell, site, name, out, icon=None, secret=None, app_id=None, version=N
     key, cert, pub = signing_key(package, secret)
     apk = sign_v2(buf.getvalue(), key, cert, pub)
     with open(out, 'wb') as f: f.write(apk)
-    return {'out': out, 'name': name, 'id': package, 'version': vname, 'files': len(files), 'size': len(apk)}
+    return {'out': out, 'name': label or name, 'id': package, 'version': vname, 'files': len(files), 'size': len(apk)}
 
 
 def main():
     ap = argparse.ArgumentParser(description='Turn an HTML app into an Android APK.')
     ap.add_argument('site', help='index.html, a .zip of the site, or a folder')
     ap.add_argument('--name', help='app name shown under the icon (default: the page <title>)')
+    ap.add_argument('--label', help='text under the icon, e.g. "Magic Orb b4" (default: the name). The app ID still comes from --name, so updates keep working')
     ap.add_argument('--icon', help='PNG/JPG icon (default: the page icon, else a letter icon)')
     ap.add_argument('--out', help='output .apk path')
     ap.add_argument('--secret', help='optional phrase mixed into the signing key; reuse it for updates')
@@ -433,7 +434,7 @@ def main():
     a.version = a.version or datetime.datetime.now().strftime('%Y.%m.%d-%H%M')
     # file name always carries the version, e.g. Magic_Orb_v5.2-build3.apk
     out = a.out or (re.sub(r'[^A-Za-z0-9_-]+', '_', name).strip('_') + '_v' + re.sub(r'[^A-Za-z0-9._-]+', '_', a.version) + '.apk')
-    r = build(a.shell, a.site, name, out, a.icon, a.secret, a.app_id, a.version)
+    r = build(a.shell, a.site, name, out, a.icon, a.secret, a.app_id, a.version, a.label)
     print('OK  %(out)s  ·  name: %(name)s  ·  app ID: %(id)s  ·  version: %(version)s  ·  %(files)d file(s)  ·  %(size)d bytes' % r)
 
 
